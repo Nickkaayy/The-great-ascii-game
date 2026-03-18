@@ -5,6 +5,16 @@ const playerListEl = document.getElementById('playerList');
 const chatInput = document.getElementById('chatInput');
 const startScreen = document.getElementById('startScreen');
 
+
+// Assuming you have the character's X and Y coordinates on the screen
+const chatBubble = document.getElementById('chat-bubble');
+
+// Position it slightly to the right and above the character
+// You may need to add/subtract offsets depending on your character's sprite size
+chatBubble.style.left = (character.x + 30) + 'px'; 
+chatBubble.style.top = (character.y - 40) + 'px';
+
+
 let myId = null;
 let players = {};
 let cameraX = 0;
@@ -14,6 +24,36 @@ const VIEW_H = 40;
 let baseMap = [];
 
 let pressedKeys = new Set();
+
+
+const MAP_WIDTH = 100;  // 100 tiles wide
+const MAP_HEIGHT = 100; // 100 tiles tall
+let gameMap = [];
+
+function generateWorld() {
+    gameMap = []; // Clear any existing map
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+        let row = [];
+        for (let x = 0; x < MAP_WIDTH; x++) {
+            let rand = Math.random();
+            let tileType = 0; // Default: 0 = Grass
+            
+            if (rand > 0.85) {
+                tileType = 1; // 15% chance of a Tree
+            } else if (rand > 0.95) {
+                tileType = 2; // 5% chance of a Rock
+            }
+            
+            row.push(tileType);
+        }
+        gameMap.push(row);
+    }
+    console.log("World generated!");
+}
+
+// Call this once when the game starts
+generateWorld();
+
 
 function joinGame() {
   const name = document.getElementById('nameInput').value.trim() || 'Wanderer';

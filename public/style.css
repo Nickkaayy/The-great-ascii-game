@@ -1,5 +1,23 @@
-body { margin:0; background:#000; color:#0f0; font-family: 'Courier New', monospace; overflow:hidden; }
 
+.chat-text {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 12px;
+    line-height: 1.5; /* Adjust to make the vertical spacing match the horizontal */
+}
+body {
+    display: flex;
+    justify-content: center;  /* Centers horizontally */
+    align-items: center;      /* Centers vertically */
+    height: 100vh;            /* Takes up the full height of the browser window */
+    margin: 0;                /* Removes default browser margins */
+    background-color: #1a1a1a; /* Dark background frames the map nicely */
+    overflow: hidden;         /* Prevents scrollbars on the whole page */
+}
+
+#game-container {
+    /* Make sure your map has a set width/height or max-width here */
+    box-shadow: 0 0 20px rgba(0,0,0,0.5); /* Optional: adds a nice drop shadow */
+}
 #startScreen { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; z-index:10; }
 #startScreen input, #startScreen button { font-size:1.4em; padding:8px; margin:10px; background:#111; color:#0f0; border:1px solid #0f0; }
 
@@ -13,3 +31,13 @@ body { margin:0; background:#000; color:#0f0; font-family: 'Courier New', monosp
 #chatInput { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); width:80%; max-width:700px; font-size:1.2em; background:#111; color:#0f0; border:1px solid #0f0; padding:8px; z-index:30; }
 
 #info { position:fixed; bottom:10px; left:10px; font-size:0.9em; opacity:0.6; }
+
+#chat-bubble {
+    position: absolute;
+    /* Add some styling to make it look like a bubble */
+    background: white;
+    padding: 8px;
+    border-radius: 8px;
+    pointer-events: none; /* So it doesn't block mouse clicks on the map */
+    transition: left 0.1s, top 0.1s; /* Smooth following */
+}
