@@ -47,7 +47,7 @@ function getTile(wx, wy) {
 
 io.on('connection', (socket) => {
   console.log('Player connected:', socket.id);
-
+  
   // Create player
   players[socket.id] = {
     id: socket.id,
@@ -57,6 +57,14 @@ io.on('connection', (socket) => {
     y: 0,
     color: '#0f0'
   };
+
+  socket.on('chat', (message) => {
+    if (!players[socket.id] || !message) return;
+    io.emit('chatMessage', {
+      name: players[socket.id].name,
+      message: message
+    });
+  });
 
   // Send join info to this player
   socket.emit('joined', {
