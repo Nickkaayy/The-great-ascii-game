@@ -5,16 +5,6 @@ const playerListEl = document.getElementById('playerList');
 const chatInput = document.getElementById('chatInput');
 const startScreen = document.getElementById('startScreen');
 
-
-// Assuming you have the character's X and Y coordinates on the screen
-const chatBubble = document.getElementById('chat-bubble');
-
-// Position it slightly to the right and above the character
-// You may need to add/subtract offsets depending on your character's sprite size
-chatBubble.style.left = (character.x + 30) + 'px'; 
-chatBubble.style.top = (character.y - 40) + 'px';
-
-
 let myId = null;
 let players = {};
 let cameraX = 0;
@@ -22,38 +12,7 @@ let cameraY = 0;
 const VIEW_W = 80;
 const VIEW_H = 40;
 let baseMap = [];
-
 let pressedKeys = new Set();
-
-
-const MAP_WIDTH = 100;  // 100 tiles wide
-const MAP_HEIGHT = 100; // 100 tiles tall
-let gameMap = [];
-
-function generateWorld() {
-    gameMap = []; // Clear any existing map
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-        let row = [];
-        for (let x = 0; x < MAP_WIDTH; x++) {
-            let rand = Math.random();
-            let tileType = 0; // Default: 0 = Grass
-            
-            if (rand > 0.85) {
-                tileType = 1; // 15% chance of a Tree
-            } else if (rand > 0.95) {
-                tileType = 2; // 5% chance of a Rock
-            }
-            
-            row.push(tileType);
-        }
-        gameMap.push(row);
-    }
-    console.log("World generated!");
-}
-
-// Call this once when the game starts
-generateWorld();
-
 
 function joinGame() {
   const name = document.getElementById('nameInput').value.trim() || 'Wanderer';
@@ -66,11 +25,16 @@ function joinGame() {
   socket.emit('setInfo', { name, char });
 }
 
-// Load fixed map.txt (tiles infinitely)
+// Load your fixed map.txt (tiles infinitely in all directions)
 fetch('/map.txt')
   .then(r => r.text())
   .then(text => {
     baseMap = text.trim().split('\n').map(line => line.split(''));
+    render(); // render once map is loaded
+  })
+  .catch(err => {
+    console.error("Could not load map.txt", err);
+    baseMap = [['.']]; // fallback
   });
 
 function getTile(wx, wy) {
@@ -130,10 +94,11 @@ function addChatMessage(text) {
   }, 5000);
 }
 
-// ====================== SOCKETS ======================
+// SOCKET EVENTS
 socket.on('joined', data => {
   myId = data.id;
   players = data.players;
+  centerOnPlayer(); // start centered
   render();
   updatePlayerList();
 });
@@ -171,11 +136,12 @@ socket.on('chatMessage', data => {
   addChatMessage(`${data.name}: ${data.message}`);
 });
 
-// ====================== INPUT ======================
+// INPUT
 document.addEventListener('keydown', e => {
   if (startScreen.style.display !== 'none') return;
 
   const key = e.key.toLowerCase();
+
   if (document.activeElement === chatInput) {
     if (e.key === 'Enter') {
       if (chatInput.value.trim()) {
@@ -198,7 +164,7 @@ document.addEventListener('keyup', e => {
   pressedKeys.delete(e.key.toLowerCase());
 });
 
-// Smooth movement loop (60ms = very responsive)
+// Smooth movement – every ~60 ms
 setInterval(() => {
   let moved = false;
   if (pressedKeys.has('w')) { socket.emit('move', 'up'); moved = true; }
@@ -209,5 +175,4 @@ setInterval(() => {
   if (moved) render();
 }, 60);
 
-// Chat input styling
 chatInput.addEventListener('focus', () => pressedKeys.clear());
