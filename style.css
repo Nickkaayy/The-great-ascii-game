@@ -1,5 +1,6 @@
 body {
   margin: 0;
+  padding: 0;
   background: #000;
   color: #0f0;
   font-family: 'Courier New', Courier, monospace;
@@ -7,10 +8,10 @@ body {
   height: 100vh;
 }
 
-/* Optional retro font for chat / UI – comment out if you prefer normal font */
-.chat-text, #chatInput, #info, #playerList, #chatLog div, #startScreen {
+/* Retro font for UI elements (optional – comment out lines if you prefer plain text) */
+#startScreen, #chatInput, #info, #playerList, #chatLog div {
   font-family: 'Press Start 2P', cursive;
-  font-size: 12px; /* smaller for retro look */
+  font-size: 12px;
 }
 
 #startScreen {
@@ -37,10 +38,11 @@ body {
   white-space: pre;
   background: #000;
   padding: 10px;
-  margin: 0 auto;
-  display: block;
-  box-sizing: border-box;
+  margin: 0;
+  width: 100vw;
   height: 100vh;
+  box-sizing: border-box;
+  overflow: hidden; /* prevent any scroll */
 }
 
 #chatLog {
@@ -58,6 +60,7 @@ body {
   margin: 2px 0;
   font-size: 1.1em;
   transition: opacity 1s;
+  color: #0f0;
 }
 
 #playerList {
@@ -69,6 +72,7 @@ body {
   min-width: 180px;
   z-index: 20;
   font-size: 1.1em;
+  color: #0f0;
 }
 
 #chatInput {
@@ -84,12 +88,14 @@ body {
   border: 1px solid #0f0;
   padding: 8px;
   z-index: 30;
+  box-sizing: border-box;
 }
 
 #info {
-  position: fixed;
-  bottom: 45px; /* above chat input */
+  position: absolute;
+  bottom: 50px; /* above chat input */
   left: 10px;
   font-size: 0.9em;
   opacity: 0.6;
+  z-index: 20;
 }
