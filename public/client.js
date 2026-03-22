@@ -18,7 +18,10 @@ const CELL_MIN = 6, CELL_MAX = 36;
 // Client-side prediction — must match server values
 const PLAYER_SPEED = 200;
 const PLAYER_RADIUS = 8;
+// Tiles solid for player movement
 const SOLID_TILES = new Set(['#', '~', 'T', '"']);
+// Tiles that stop bullets visually (water is passable for bullets)
+const BULLET_BLOCK_TILES = new Set(['#', 'T', '"']);
 
 function tileBlocked(tx, ty) {
   if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return true;
@@ -151,6 +154,8 @@ function gameLoop(ts) {
   const me = players[myId];
 
   // ── Client-side prediction for local player ──
+  // Server no longer echoes our position back — we own it entirely.
+  // Server only sends OTHER players' positions to us.
   if (me && me.alive) {
     let mx = 0, my = 0;
     if (keysDown.has('w') || keysDown.has('arrowup'))    my -= 1;
@@ -158,9 +163,7 @@ function gameLoop(ts) {
     if (keysDown.has('a') || keysDown.has('arrowleft'))  mx -= 1;
     if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
 
-    const moving = mx !== 0 || my !== 0;
-
-    if (moving) {
+    if (mx !== 0 || my !== 0) {
       const len = Math.sqrt(mx*mx + my*my);
       const spd = PLAYER_SPEED * dt;
       const nx = me.renderX + (mx/len) * spd;
@@ -168,28 +171,9 @@ function gameLoop(ts) {
       const resolved = resolveMove(me.renderX, me.renderY, nx, ny);
       me.renderX = resolved.x;
       me.renderY = resolved.y;
-      // While moving: very light reconcile, only to prevent long-term drift
-      const dx = me.x - me.renderX, dy = me.y - me.renderY;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist > 60) {
-        // Too far off — hard snap (teleport / wall collision discrepancy)
-        me.renderX = me.x; me.renderY = me.y;
-      } else if (dist > 8) {
-        // Gentle nudge only when meaningfully off
-        me.renderX += dx * 0.03;
-        me.renderY += dy * 0.03;
-      }
-    } else {
-      // Stopped — reconcile to server position cleanly, no wobble
-      const dx = me.x - me.renderX, dy = me.y - me.renderY;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist < 1) {
-        // Close enough — snap to kill the wobble dead
-        me.renderX = me.x; me.renderY = me.y;
-      } else {
-        me.renderX += dx * 0.25;
-        me.renderY += dy * 0.25;
-      }
+      // Also keep authoritative x/y in sync so HUD coords are right
+      me.x = me.renderX;
+      me.y = me.renderY;
     }
 
     // Camera locks directly to predicted position — zero lag
@@ -205,15 +189,18 @@ function gameLoop(ts) {
     p.renderY += (p.y - p.renderY) * 0.25;
   }
 
-  // ── Move bullets visually ──
+  // ── Move bullets visually + client-side terrain clipping ──
   const BULLET_SPEED_PX = 280;
-  for (const b of Object.values(bullets)) {
+  for (const [id, b] of Object.entries(bullets)) {
     b.x += b.dx * BULLET_SPEED_PX * dt;
     b.y += b.dy * BULLET_SPEED_PX * dt;
     b.life -= dt;
-  }
-  for (const [id, b] of Object.entries(bullets)) {
-    if (b.life <= 0) delete bullets[id];
+    // Check if bullet hit a blocking tile
+    const tx = Math.floor(b.x / TILE), ty = Math.floor(b.y / TILE);
+    const tileCh = mapTiles[ty]?.[tx];
+    if (b.life <= 0 || BULLET_BLOCK_TILES.has(tileCh)) {
+      delete bullets[id];
+    }
   }
 
   draw();
@@ -518,9 +505,28 @@ socket.on('playerLeft', id => {
 });
 
 socket.on('positions', data => {
+  // Only update OTHER players — never update self (causes rubberbanding)
   for (const [id, pos] of Object.entries(data)) {
+    if (id === myId) continue;
     if (players[id]) { players[id].x = pos.x; players[id].y = pos.y; }
   }
+});
+
+// Server sends our authoritative position — only snap if we're meaningfully off
+// (i.e. we walked into a wall the client didn't catch, or respawned)
+// Threshold: 48px = 2 tiles. Normal network jitter is <5px, wall correction is 20-100px.
+const CORRECTION_THRESHOLD = 48;
+socket.on('selfCorrection', ({ x, y }) => {
+  const me = players[myId];
+  if (!me) return;
+  const dx = x - me.renderX, dy = y - me.renderY;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist > CORRECTION_THRESHOLD) {
+    // Real desync (wall, collision) — snap cleanly
+    me.renderX = x; me.renderY = y;
+    me.x = x; me.y = y;
+  }
+  // Below threshold: ignore — client prediction is correct enough
 });
 
 socket.on('ammoUpdate', ({ bullets: b }) => {

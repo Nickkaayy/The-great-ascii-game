@@ -25,7 +25,7 @@ const PICKUP_INTERVAL_MS = 60000;
 const PICKUPS_PER_SPAWN = 6;
 const PICKUP_HP_VAL = 2;
 const PICKUP_AMMO_VAL = 5;
-const TICK_MS = 1000 / 20; // 20hz server tick — sustainable on free tier
+const TICK_MS = 1000 / 30; // 30hz — better accuracy, still stable on free tier
 
 const MAP_SIZES = {
   small:  { w: 60,  h: 40  },
@@ -95,7 +95,10 @@ function generateMap(seed, cols, rows) {
 }
 
 // ── COLLISION HELPERS ─────────────────────────────────────────────────────────
-const SOLID = new Set(['#', '~', 'T', '"']);
+// Tiles that block player movement
+const SOLID_MOVE = new Set(['#', '~', 'T', '"']);
+// Tiles that block bullets (water does NOT block bullets)
+const SOLID_BULLET = new Set(['#', 'T', '"']);
 
 function tileAt(map, cols, rows, px, py) {
   const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
@@ -104,7 +107,11 @@ function tileAt(map, cols, rows, px, py) {
 }
 
 function isSolid(map, cols, rows, px, py) {
-  return SOLID.has(tileAt(map, cols, rows, px, py));
+  return SOLID_MOVE.has(tileAt(map, cols, rows, px, py));
+}
+
+function isBulletBlocked(map, cols, rows, px, py) {
+  return SOLID_BULLET.has(tileAt(map, cols, rows, px, py));
 }
 
 // Circle vs tile collision — check corners of bounding box
@@ -130,7 +137,7 @@ function marchBullet(map, cols, rows, bx, by, dx, dy, dist, players, shooterId) 
   let cx = bx, cy = by;
   for (let i = 0; i < steps; i++) {
     cx += sx; cy += sy;
-    if (isSolid(map, cols, rows, cx, cy)) return { blocked: true, x: cx, y: cy };
+    if (isBulletBlocked(map, cols, rows, cx, cy)) return { blocked: true, x: cx, y: cy };
     for (const [id, p] of Object.entries(players)) {
       if (id === shooterId || !p.alive) continue;
       const ddx = cx - p.x, ddy = cy - p.y;
@@ -311,12 +318,31 @@ function gameTick(room, dt) {
   }
 
   if (playersChanged) {
-    // Only send players whose position actually changed this tick
-    const update = {};
-    for (const [id,p] of Object.entries(players)) {
-      if (p.alive && (p.moveX || p.moveY)) update[id] = { x:p.x, y:p.y };
+    // Build moved positions
+    const movedPos = {};
+    for (const [id, p] of Object.entries(players)) {
+      if (p.alive && (p.moveX || p.moveY)) movedPos[id] = { x: p.x, y: p.y };
     }
-    if (Object.keys(update).length) io.to(room.code).emit('positions', update);
+
+    for (const [id] of Object.entries(players)) {
+      const sock = io.sockets.sockets.get(id);
+      if (!sock) continue;
+
+      // Send other players' positions (for rendering them)
+      const others = {};
+      for (const [oid, pos] of Object.entries(movedPos)) {
+        if (oid !== id) others[oid] = pos;
+      }
+      if (Object.keys(others).length) sock.emit('positions', others);
+
+      // Send self-correction ONLY if the player hit a wall (server pos differs from
+      // what client would predict for open movement). Client ignores this unless
+      // the delta exceeds its threshold — eliminates rubberbanding on open ground.
+      const p = players[id];
+      if (p && p.alive && (p.moveX || p.moveY)) {
+        sock.emit('selfCorrection', { x: p.x, y: p.y });
+      }
+    }
   }
 }
 
