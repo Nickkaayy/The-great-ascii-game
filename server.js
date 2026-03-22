@@ -4,7 +4,13 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  // Disable per-message deflate — compression adds latency on small frequent packets
+  perMessageDeflate: false,
+  // Keep connections warm on Render free tier (avoids cold-start lag spikes)
+  pingInterval: 10000,
+  pingTimeout: 5000,
+});
 app.use(express.static('public'));
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -19,7 +25,7 @@ const PICKUP_INTERVAL_MS = 60000;
 const PICKUPS_PER_SPAWN = 6;
 const PICKUP_HP_VAL = 2;
 const PICKUP_AMMO_VAL = 5;
-const TICK_MS = 1000 / 60; // 60hz server tick
+const TICK_MS = 1000 / 20; // 20hz server tick — sustainable on free tier
 
 const MAP_SIZES = {
   small:  { w: 60,  h: 40  },
@@ -305,9 +311,12 @@ function gameTick(room, dt) {
   }
 
   if (playersChanged) {
+    // Only send players whose position actually changed this tick
     const update = {};
-    for (const [id,p] of Object.entries(players)) if (p.alive) update[id]={x:p.x,y:p.y};
-    io.to(room.code).emit('positions', update);
+    for (const [id,p] of Object.entries(players)) {
+      if (p.alive && (p.moveX || p.moveY)) update[id] = { x:p.x, y:p.y };
+    }
+    if (Object.keys(update).length) io.to(room.code).emit('positions', update);
   }
 }
 
@@ -389,7 +398,8 @@ io.on('connection', (socket) => {
       life: 3, // seconds until auto-expire
     };
     myRoom.bullets[bid] = bullet;
-    io.to(myRoom.code).emit('bulletSpawned', {
+    // Broadcast to everyone EXCEPT shooter — shooter spawns bullet locally already
+    socket.to(myRoom.code).emit('bulletSpawned', {
       id: bid, ownerId: socket.id,
       x: bullet.x, y: bullet.y, dx: bullet.dx, dy: bullet.dy,
     });

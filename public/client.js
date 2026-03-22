@@ -140,6 +140,7 @@ function screenToWorld(sx, sy) {
 
 // ── MAIN RENDER LOOP ──────────────────────────────────────────────────────────
 let lastFrame = 0;
+let lastHudUpdate = 0;
 function gameLoop(ts) {
   requestAnimationFrame(gameLoop);
   const dt = Math.min((ts - lastFrame) / 1000, 0.05);
@@ -150,8 +151,6 @@ function gameLoop(ts) {
   const me = players[myId];
 
   // ── Client-side prediction for local player ──
-  // Move renderX/renderY ourselves using same physics as server.
-  // Server position (x, y) silently corrects us if we drift.
   if (me && me.alive) {
     let mx = 0, my = 0;
     if (keysDown.has('w') || keysDown.has('arrowup'))    my -= 1;
@@ -159,7 +158,9 @@ function gameLoop(ts) {
     if (keysDown.has('a') || keysDown.has('arrowleft'))  mx -= 1;
     if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
 
-    if (mx !== 0 || my !== 0) {
+    const moving = mx !== 0 || my !== 0;
+
+    if (moving) {
       const len = Math.sqrt(mx*mx + my*my);
       const spd = PLAYER_SPEED * dt;
       const nx = me.renderX + (mx/len) * spd;
@@ -167,11 +168,29 @@ function gameLoop(ts) {
       const resolved = resolveMove(me.renderX, me.renderY, nx, ny);
       me.renderX = resolved.x;
       me.renderY = resolved.y;
+      // While moving: very light reconcile, only to prevent long-term drift
+      const dx = me.x - me.renderX, dy = me.y - me.renderY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist > 60) {
+        // Too far off — hard snap (teleport / wall collision discrepancy)
+        me.renderX = me.x; me.renderY = me.y;
+      } else if (dist > 8) {
+        // Gentle nudge only when meaningfully off
+        me.renderX += dx * 0.03;
+        me.renderY += dy * 0.03;
+      }
+    } else {
+      // Stopped — reconcile to server position cleanly, no wobble
+      const dx = me.x - me.renderX, dy = me.y - me.renderY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 1) {
+        // Close enough — snap to kill the wobble dead
+        me.renderX = me.x; me.renderY = me.y;
+      } else {
+        me.renderX += dx * 0.25;
+        me.renderY += dy * 0.25;
+      }
     }
-
-    // Gently reconcile with server position (fixes any drift without snapping)
-    me.renderX += (me.x - me.renderX) * 0.05;
-    me.renderY += (me.y - me.renderY) * 0.05;
 
     // Camera locks directly to predicted position — zero lag
     camX = me.renderX;
@@ -198,7 +217,8 @@ function gameLoop(ts) {
   }
 
   draw();
-  updateHUD();
+  // HUD DOM writes throttled to 10hz — DOM updates are expensive, canvas is cheap
+  if (ts - lastHudUpdate > 100) { updateHUD(); lastHudUpdate = ts; }
 }
 requestAnimationFrame(gameLoop);
 
@@ -412,11 +432,12 @@ canvas.addEventListener('mousemove', e => {
   mouseX = e.clientX; mouseY = e.clientY;
 });
 
-// Shoot on click
+// Shoot on click — spawn bullet locally IMMEDIATELY (no round-trip wait)
 canvas.addEventListener('click', e => {
   if (!myId || chatFocused) return;
   const me = players[myId];
   if (!me || !me.alive) return;
+  if (me.bullets <= 0) return;
 
   const scale = cellSize / TILE;
   const vpLeft = PANEL_W;
@@ -429,7 +450,23 @@ canvas.addEventListener('click', e => {
   const dy = e.clientY - msy;
   const len = Math.sqrt(dx*dx+dy*dy);
   if (len < 2) return;
-  socket.emit('shoot', { dx: dx/len, dy: dy/len });
+
+  const ndx = dx/len, ndy = dy/len;
+
+  // Spawn bullet visually right now — feels instant
+  const localId = 'local_' + Date.now() + '_' + Math.random();
+  bullets[localId] = {
+    id: localId, ownerId: myId,
+    x: me.renderX, y: me.renderY,
+    dx: ndx, dy: ndy,
+    life: 3, local: true,
+  };
+
+  // Optimistically decrement ammo
+  me.bullets = Math.max(0, me.bullets - 1);
+
+  // Tell server (server will validate, handle hit detection, broadcast to others)
+  socket.emit('shoot', { dx: ndx, dy: ndy });
 });
 
 // Scroll to zoom
@@ -487,6 +524,7 @@ socket.on('positions', data => {
 });
 
 socket.on('ammoUpdate', ({ bullets: b }) => {
+  // Server confirms real ammo count — sync back (corrects optimistic local decrement)
   if (players[myId]) players[myId].bullets = b;
 });
 
@@ -495,11 +533,17 @@ socket.on('noAmmo', () => {
 });
 
 socket.on('bulletSpawned', b => {
-  bullets[b.id] = { ...b, life: 3 };
+  // Only for other players' bullets — our own are spawned locally on click
+  if (b.ownerId !== myId) bullets[b.id] = { ...b, life: 3 };
 });
 
 socket.on('bulletDead', data => {
+  // Remove server bullet
   delete bullets[data.id];
+  // Also clean up any local prediction bullets from same owner that may still exist
+  for (const [id, b] of Object.entries(bullets)) {
+    if (b.local && b.ownerId === data.ownerId) { delete bullets[id]; break; }
+  }
 });
 
 socket.on('playerHit', data => {
