@@ -144,6 +144,9 @@ function screenToWorld(sx, sy) {
 // ── MAIN RENDER LOOP ──────────────────────────────────────────────────────────
 let lastFrame = 0;
 let lastHudUpdate = 0;
+let lastPosSend = 0;
+const POS_SEND_INTERVAL = 50; // send position to server every 50ms (20hz)
+
 function gameLoop(ts) {
   requestAnimationFrame(gameLoop);
   const dt = Math.min((ts - lastFrame) / 1000, 0.05);
@@ -153,9 +156,7 @@ function gameLoop(ts) {
 
   const me = players[myId];
 
-  // ── Client-side prediction for local player ──
-  // Server no longer echoes our position back — we own it entirely.
-  // Server only sends OTHER players' positions to us.
+  // ── Client owns its own movement entirely — no server involvement ──
   if (me && me.alive) {
     let mx = 0, my = 0;
     if (keysDown.has('w') || keysDown.has('arrowup'))    my -= 1;
@@ -171,40 +172,41 @@ function gameLoop(ts) {
       const resolved = resolveMove(me.renderX, me.renderY, nx, ny);
       me.renderX = resolved.x;
       me.renderY = resolved.y;
-      // Also keep authoritative x/y in sync so HUD coords are right
       me.x = me.renderX;
       me.y = me.renderY;
     }
 
-    // Camera locks directly to predicted position — zero lag
     camX = me.renderX;
     camY = me.renderY;
+
+    // Push position to server at 20hz so server can use it for hit detection
+    if (ts - lastPosSend > POS_SEND_INTERVAL) {
+      socket.emit('pos', { x: me.renderX, y: me.renderY });
+      lastPosSend = ts;
+    }
   }
 
-  // ── Interpolate other players (lerp toward server position) ──
+  // ── Interpolate other players smoothly ──
   for (const p of Object.values(players)) {
     if (p.id === myId) continue;
     if (p.renderX === undefined) { p.renderX = p.x; p.renderY = p.y; }
-    p.renderX += (p.x - p.renderX) * 0.25;
-    p.renderY += (p.y - p.renderY) * 0.25;
+    p.renderX += (p.x - p.renderX) * 0.2;
+    p.renderY += (p.y - p.renderY) * 0.2;
   }
 
-  // ── Move bullets visually + client-side terrain clipping ──
-  const BULLET_SPEED_PX = 280;
+  // ── Move bullets visually ──
+  const BULLET_SPEED_PX = 300;
   for (const [id, b] of Object.entries(bullets)) {
     b.x += b.dx * BULLET_SPEED_PX * dt;
     b.y += b.dy * BULLET_SPEED_PX * dt;
     b.life -= dt;
-    // Check if bullet hit a blocking tile
     const tx = Math.floor(b.x / TILE), ty = Math.floor(b.y / TILE);
-    const tileCh = mapTiles[ty]?.[tx];
-    if (b.life <= 0 || BULLET_BLOCK_TILES.has(tileCh)) {
+    if (b.life <= 0 || BULLET_BLOCK_TILES.has(mapTiles[ty]?.[tx])) {
       delete bullets[id];
     }
   }
 
   draw();
-  // HUD DOM writes throttled to 10hz — DOM updates are expensive, canvas is cheap
   if (ts - lastHudUpdate > 100) { updateHUD(); lastHudUpdate = ts; }
 }
 requestAnimationFrame(gameLoop);
@@ -379,7 +381,6 @@ function updateHUD() {
 // ── INPUT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (lobby.style.display !== 'none') return;
-
   if (e.key === 'Enter') {
     if (chatFocused) {
       const msg = chatInput.value.trim();
@@ -391,28 +392,16 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (chatFocused) return;
-  if (e.key === ' ') { e.preventDefault(); }
+  if (e.key === ' ') e.preventDefault();
   keysDown.add(e.key.toLowerCase());
-  sendInput();
 });
 
 document.addEventListener('keyup', e => {
   keysDown.delete(e.key.toLowerCase());
-  sendInput();
 });
 
-chatInput.addEventListener('focus', () => { chatFocused = true;  keysDown.clear(); sendInput(); });
-chatInput.addEventListener('blur',  () => { chatFocused = false; keysDown.clear(); sendInput(); });
-
-function sendInput() {
-  if (!myId) return;
-  let mx = 0, my = 0;
-  if (keysDown.has('w') || keysDown.has('arrowup'))    my -= 1;
-  if (keysDown.has('s') || keysDown.has('arrowdown'))  my += 1;
-  if (keysDown.has('a') || keysDown.has('arrowleft'))  mx -= 1;
-  if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
-  socket.emit('input', { moveX: mx, moveY: my });
-}
+chatInput.addEventListener('focus', () => { chatFocused = true;  keysDown.clear(); });
+chatInput.addEventListener('blur',  () => { chatFocused = false; keysDown.clear(); });
 
 // Mouse track
 canvas.addEventListener('mousemove', e => {
@@ -440,20 +429,19 @@ canvas.addEventListener('click', e => {
 
   const ndx = dx/len, ndy = dy/len;
 
-  // Spawn bullet visually right now — feels instant
+  // Spawn bullet visually right now
   const localId = 'local_' + Date.now() + '_' + Math.random();
   bullets[localId] = {
-    id: localId, ownerId: myId,
-    x: me.renderX, y: me.renderY,
-    dx: ndx, dy: ndy,
-    life: 3, local: true,
+    id:localId, ownerId:myId,
+    x:me.renderX, y:me.renderY,
+    dx:ndx, dy:ndy,
+    life:3, local:true,
   };
 
-  // Optimistically decrement ammo
   me.bullets = Math.max(0, me.bullets - 1);
 
-  // Tell server (server will validate, handle hit detection, broadcast to others)
-  socket.emit('shoot', { dx: ndx, dy: ndy });
+  // Tell server — include our current position so bullet origin is accurate
+  socket.emit('shoot', { x:me.renderX, y:me.renderY, dx:ndx, dy:ndy });
 });
 
 // Scroll to zoom
@@ -504,29 +492,9 @@ socket.on('playerLeft', id => {
   delete players[id];
 });
 
-socket.on('positions', data => {
-  // Only update OTHER players — never update self (causes rubberbanding)
-  for (const [id, pos] of Object.entries(data)) {
-    if (id === myId) continue;
-    if (players[id]) { players[id].x = pos.x; players[id].y = pos.y; }
-  }
-});
-
-// Server sends our authoritative position — only snap if we're meaningfully off
-// (i.e. we walked into a wall the client didn't catch, or respawned)
-// Threshold: 48px = 2 tiles. Normal network jitter is <5px, wall correction is 20-100px.
-const CORRECTION_THRESHOLD = 48;
-socket.on('selfCorrection', ({ x, y }) => {
-  const me = players[myId];
-  if (!me) return;
-  const dx = x - me.renderX, dy = y - me.renderY;
-  const dist = Math.sqrt(dx*dx + dy*dy);
-  if (dist > CORRECTION_THRESHOLD) {
-    // Real desync (wall, collision) — snap cleanly
-    me.renderX = x; me.renderY = y;
-    me.x = x; me.y = y;
-  }
-  // Below threshold: ignore — client prediction is correct enough
+// Other players push their positions — update target for lerp
+socket.on('pos', ({ id, x, y }) => {
+  if (players[id] && id !== myId) { players[id].x = x; players[id].y = y; }
 });
 
 socket.on('ammoUpdate', ({ bullets: b }) => {
