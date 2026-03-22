@@ -9,7 +9,7 @@ app.use(express.static('public'));
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const TILE = 24;          // pixels per tile
-const PLAYER_SPEED = 120; // pixels per second
+const PLAYER_SPEED = 200; // pixels per second
 const BULLET_SPEED = 280; // pixels per second
 const BULLET_RADIUS = 3;
 const PLAYER_RADIUS = 8;

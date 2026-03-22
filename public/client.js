@@ -15,6 +15,27 @@ let camX = 0, camY = 0;
 let cellSize = 18;  // px per tile for rendering
 const CELL_MIN = 6, CELL_MAX = 36;
 
+// Client-side prediction — must match server values
+const PLAYER_SPEED = 200;
+const PLAYER_RADIUS = 8;
+const SOLID_TILES = new Set(['#', '~', 'T', '"']);
+
+function tileBlocked(tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return true;
+  return SOLID_TILES.has(mapTiles[ty]?.[tx]);
+}
+function circleHitsMap(px, py) {
+  const r = PLAYER_RADIUS;
+  const checks = [[-r,-r],[r,-r],[-r,r],[r,r],[0,-r],[0,r],[-r,0],[r,0]];
+  return checks.some(([dx,dy]) => tileBlocked(Math.floor((px+dx)/TILE), Math.floor((py+dy)/TILE)));
+}
+function resolveMove(ox, oy, nx, ny) {
+  if (!circleHitsMap(nx, ny)) return { x: nx, y: ny };
+  if (!circleHitsMap(nx, oy)) return { x: nx, y: oy };
+  if (!circleHitsMap(ox, ny)) return { x: ox, y: ny };
+  return { x: ox, y: oy };
+}
+
 // Input
 const keysDown = new Set();
 let chatFocused = false;
@@ -126,28 +147,52 @@ function gameLoop(ts) {
 
   if (!myId || !mapTiles.length) return;
 
-  // Smooth camera toward my player
   const me = players[myId];
-  if (me) {
-    camX += (me.renderX - camX) * 0.12;
-    camY += (me.renderY - camY) * 0.12;
+
+  // ── Client-side prediction for local player ──
+  // Move renderX/renderY ourselves using same physics as server.
+  // Server position (x, y) silently corrects us if we drift.
+  if (me && me.alive) {
+    let mx = 0, my = 0;
+    if (keysDown.has('w') || keysDown.has('arrowup'))    my -= 1;
+    if (keysDown.has('s') || keysDown.has('arrowdown'))  my += 1;
+    if (keysDown.has('a') || keysDown.has('arrowleft'))  mx -= 1;
+    if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
+
+    if (mx !== 0 || my !== 0) {
+      const len = Math.sqrt(mx*mx + my*my);
+      const spd = PLAYER_SPEED * dt;
+      const nx = me.renderX + (mx/len) * spd;
+      const ny = me.renderY + (my/len) * spd;
+      const resolved = resolveMove(me.renderX, me.renderY, nx, ny);
+      me.renderX = resolved.x;
+      me.renderY = resolved.y;
+    }
+
+    // Gently reconcile with server position (fixes any drift without snapping)
+    me.renderX += (me.x - me.renderX) * 0.05;
+    me.renderY += (me.y - me.renderY) * 0.05;
+
+    // Camera locks directly to predicted position — zero lag
+    camX = me.renderX;
+    camY = me.renderY;
   }
 
-  // Interpolate all player render positions
+  // ── Interpolate other players (lerp toward server position) ──
   for (const p of Object.values(players)) {
+    if (p.id === myId) continue;
     if (p.renderX === undefined) { p.renderX = p.x; p.renderY = p.y; }
-    p.renderX += (p.x - p.renderX) * 0.18;
-    p.renderY += (p.y - p.renderY) * 0.18;
+    p.renderX += (p.x - p.renderX) * 0.25;
+    p.renderY += (p.y - p.renderY) * 0.25;
   }
 
-  // Move bullets client-side (visual only; server is authoritative)
+  // ── Move bullets visually ──
   const BULLET_SPEED_PX = 280;
   for (const b of Object.values(bullets)) {
     b.x += b.dx * BULLET_SPEED_PX * dt;
     b.y += b.dy * BULLET_SPEED_PX * dt;
     b.life -= dt;
   }
-  // Remove stale bullets
   for (const [id, b] of Object.entries(bullets)) {
     if (b.life <= 0) delete bullets[id];
   }
@@ -293,7 +338,7 @@ function updateHUD() {
   const me = players[myId];
   if (!me) return;
 
-  const tx = Math.floor(me.x / TILE), ty = Math.floor(me.y / TILE);
+  const tx = Math.floor((me.renderX ?? me.x) / TILE), ty = Math.floor((me.renderY ?? me.y) / TILE);
   coordsEl.textContent = `${tx}, ${ty}`;
   zoomEl.textContent   = `ZOOM ${(cellSize/16).toFixed(2)}×`;
 
@@ -511,11 +556,12 @@ socket.on('roomClosed', () => {
   document.getElementById('roomClosedOverlay').style.display = 'flex';
 });
 
-// Space = center on self
+// Space = snap camera to self (camera already follows, this is instant re-center)
 document.addEventListener('keydown', e => {
   if (e.key === ' ' && !chatFocused && myId && players[myId]) {
-    camX = players[myId].renderX;
-    camY = players[myId].renderY;
+    const me = players[myId];
+    camX = me.renderX ?? me.x;
+    camY = me.renderY ?? me.y;
   }
 });
 
