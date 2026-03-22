@@ -1,101 +1,299 @@
+/* ── RESET & BASE ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #060a0c;
+  --bg2:       #0b1217;
+  --border:    #1a3040;
+  --green:     #00ff88;
+  --green-dim: #00884a;
+  --cyan:      #00cfff;
+  --amber:     #ffb300;
+  --red:       #ff4455;
+  --text:      #8fbfcf;
+  --text-dim:  #3a6070;
+  --font:      'Share Tech Mono', 'Courier New', monospace;
+}
+
 body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  color: #0f0;
-  font-family: 'Courier New', Courier, monospace;
+  background: var(--bg);
+  color: var(--green);
+  font-family: var(--font);
   overflow: hidden;
   height: 100vh;
+  width: 100vw;
+  user-select: none;
 }
 
-/* Retro font for UI elements (optional – comment out lines if you prefer plain text) */
-#startScreen, #chatInput, #info, #playerList, #chatLog div {
-  font-family: 'Press Start 2P', cursive;
-  font-size: 12px;
-}
-
+/* ── START SCREEN ─────────────────────────────────────────── */
 #startScreen {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  z-index: 100;
+}
+
+/* Subtle scanline overlay */
+#startScreen::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,255,136,0.015) 2px,
+    rgba(0,255,136,0.015) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+#startBox {
+  position: relative;
+  z-index: 2;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  padding: 40px 48px;
+  max-width: 520px;
+  width: 90%;
+  box-shadow: 0 0 60px rgba(0,255,136,0.06), inset 0 0 40px rgba(0,0,0,0.5);
+}
+
+#startTitle {
+  margin-bottom: 32px;
   text-align: center;
+}
+
+.title-line {
+  font-size: 11px;
+  color: var(--green-dim);
+  letter-spacing: 1px;
+  line-height: 1.4;
+  opacity: 0.5;
+  display: none; /* hide pixel art lines, just use text */
+}
+
+.title-word {
+  font-size: 22px;
+  color: var(--green);
+  letter-spacing: 6px;
+  text-shadow: 0 0 20px rgba(0,255,136,0.4);
+  margin-bottom: 4px;
+}
+
+.start-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.start-fields label {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+  letter-spacing: 3px;
+}
+
+.start-fields input[type="text"],
+.start-fields input:not([type]) {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 16px;
+  padding: 8px 12px;
+  outline: none;
+  letter-spacing: 2px;
+  transition: border-color 0.2s;
+}
+
+.start-fields input:focus {
+  border-color: var(--green-dim);
+  box-shadow: 0 0 12px rgba(0,255,136,0.08);
+}
+
+.start-fields input[type="color"] {
+  width: 48px;
+  height: 36px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  padding: 2px;
+}
+
+#joinBtn {
+  display: block;
+  width: 100%;
+  font-family: var(--font);
+  font-size: 15px;
+  letter-spacing: 4px;
+  padding: 14px;
+  background: transparent;
+  color: var(--green);
+  border: 1px solid var(--green-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+#joinBtn:hover {
+  background: rgba(0,255,136,0.08);
+  border-color: var(--green);
+  box-shadow: 0 0 20px rgba(0,255,136,0.15);
+}
+
+.start-hint {
+  margin-top: 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+
+/* ── HUD ──────────────────────────────────────────────────── */
+#hud {
+  position: fixed; inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Canvas fills all space */
+#gameCanvas {
+  position: fixed; inset: 0;
+  display: block;
+  cursor: crosshair;
+}
+
+/* Scanlines on game */
+#hud::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 1px,
+    rgba(0,0,0,0.12) 1px,
+    rgba(0,0,0,0.12) 2px
+  );
+  pointer-events: none;
   z-index: 10;
 }
 
-#startScreen input, #startScreen button {
-  font-size: 1.4em;
-  padding: 8px;
-  margin: 10px;
-  background: #111;
-  color: #0f0;
-  border: 1px solid #0f0;
-}
-
-#screen {
-  font-size: 16px;
-  line-height: 1.05;
-  white-space: pre;
-  background: #000;
-  padding: 10px;
-  margin: 0;
-  width: 100vw;
+/* ── SIDEBAR ──────────────────────────────────────────────── */
+#sidebar {
+  position: fixed;
+  top: 0; right: 0;
+  width: 180px;
   height: 100vh;
-  box-sizing: border-box;
-  overflow: hidden; /* prevent any scroll */
-}
-
-#chatLog {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  max-width: 600px;
+  background: rgba(6,10,12,0.88);
+  border-left: 1px solid var(--border);
+  padding: 16px 12px;
   z-index: 20;
-  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  backdrop-filter: blur(4px);
 }
 
-#chatLog div {
-  background: rgba(0,0,0,0.7);
-  padding: 4px 10px;
-  margin: 2px 0;
-  font-size: 1.1em;
-  transition: opacity 1s;
-  color: #0f0;
+#sidebarTitle {
+  font-size: 10px;
+  letter-spacing: 4px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 #playerList {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(0,0,0,0.8);
-  padding: 10px;
-  min-width: 180px;
+  flex: 1;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.8;
+}
+
+#playerList::-webkit-scrollbar { width: 3px; }
+#playerList::-webkit-scrollbar-track { background: transparent; }
+#playerList::-webkit-scrollbar-thumb { background: var(--border); }
+
+#coords {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+#zoomDisplay {
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 1px;
+}
+
+/* ── CHAT LOG ─────────────────────────────────────────────── */
+#chatLog {
+  position: fixed;
+  bottom: 52px;
+  left: 12px;
+  max-width: 480px;
   z-index: 20;
-  font-size: 1.1em;
-  color: #0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
 }
 
+.chat-msg {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(6,10,12,0.82);
+  border-left: 2px solid var(--green-dim);
+  padding: 4px 10px;
+  transition: opacity 0.8s;
+  letter-spacing: 0.5px;
+}
+
+.chat-msg .chat-name {
+  color: var(--green);
+  margin-right: 6px;
+}
+
+.chat-msg.fading { opacity: 0; }
+
+/* ── CHAT INPUT ───────────────────────────────────────────── */
 #chatInput {
-  position: absolute;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 80%;
-  max-width: 700px;
-  font-size: 1.2em;
-  background: #111;
-  color: #0f0;
-  border: 1px solid #0f0;
-  padding: 8px;
+  position: fixed;
+  bottom: 8px; left: 12px;
+  width: 460px;
+  max-width: calc(100vw - 200px);
+  font-family: var(--font);
+  font-size: 13px;
+  background: rgba(6,10,12,0.92);
+  color: var(--green);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
   z-index: 30;
-  box-sizing: border-box;
+  outline: none;
+  letter-spacing: 1px;
+  transition: border-color 0.2s;
 }
 
-#info {
-  position: absolute;
-  bottom: 50px; /* above chat input */
-  left: 10px;
-  font-size: 0.9em;
-  opacity: 0.6;
+#chatInput:focus {
+  border-color: var(--green-dim);
+}
+
+#chatInput::placeholder { color: var(--text-dim); }
+
+/* ── KEY HINTS ────────────────────────────────────────────── */
+#keyHints {
+  position: fixed;
+  bottom: 12px; right: 190px;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 2px;
   z-index: 20;
 }

@@ -3,30 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ASCII Survival</title>
+  <title>ASCII WORLD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <!-- Optional retro font – remove the next line if you don't like it -->
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<div id="chatLog"></div>
-<div id="playerList"></div>
+  <!-- START SCREEN -->
+  <div id="startScreen">
+    <div id="startBox">
+      <div id="startTitle">
+        <div class="title-line">█████ ██████ ██████ ██████</div>
+        <div class="title-line">██ ██ ██     ██  ██ ██  ██</div>
+        <div class="title-line">██ ██ ████   ██  ██ ██████</div>
+        <div class="title-line">██ ██ ██     ██  ██ ██  ██</div>
+        <div class="title-word">ASCII  WORLD  ──  ONLINE</div>
+      </div>
+      <div class="start-fields">
+        <label>NAME<input id="nameInput" maxlength="15" value="Wanderer" autocomplete="off"></label>
+        <label>SYMBOL<input id="charInput" maxlength="1" value="@" autocomplete="off"></label>
+        <label>COLOR<input id="colorInput" type="color" value="#00ff88"></label>
+      </div>
+      <button id="joinBtn" onclick="joinGame()">[ ENTER WORLD ]</button>
+      <div class="start-hint">WASD / ARROWS · SCROLL to zoom · ENTER to chat</div>
+    </div>
+  </div>
 
-<div id="startScreen">
-  <h1>ASCII Survival</h1>
-  <input id="nameInput" placeholder="Your name" maxlength="15" value="Wanderer">
-  <input id="charInput" placeholder="Symbol" maxlength="1" value="@">
-  <button onclick="joinGame()">Join World</button>
-</div>
+  <!-- GAME HUD -->
+  <div id="hud" style="display:none">
+    <canvas id="gameCanvas"></canvas>
 
-<pre id="screen"></pre>
+    <div id="chatLog"></div>
 
-<input id="chatInput" placeholder="Type message and press Enter..." maxlength="100">
+    <div id="sidebar">
+      <div id="sidebarTitle">PLAYERS</div>
+      <div id="playerList"></div>
+      <div id="coords">0, 0</div>
+      <div id="zoomDisplay">ZOOM 1×</div>
+    </div>
 
-<div id="info">WASD = move • SPACE = center on self • Chat below</div>
+    <input id="chatInput" placeholder="press enter to chat..." maxlength="120" autocomplete="off">
+    <div id="keyHints">WASD · SCROLL zoom · SPACE center</div>
+  </div>
 
-<script src="/socket.io/socket.io.js"></script>
-<script src="client.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
 </body>
 </html>
