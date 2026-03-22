@@ -3,51 +3,132 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ASCII WORLD</title>
+  <title>Tank Tactics</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- START SCREEN -->
-  <div id="startScreen">
-    <div id="startBox">
-      <div id="startTitle">
-        <div class="title-line">█████ ██████ ██████ ██████</div>
-        <div class="title-line">██ ██ ██     ██  ██ ██  ██</div>
-        <div class="title-line">██ ██ ████   ██  ██ ██████</div>
-        <div class="title-line">██ ██ ██     ██  ██ ██  ██</div>
-        <div class="title-word">ASCII  WORLD  ──  ONLINE</div>
-      </div>
-      <div class="start-fields">
-        <label>NAME<input id="nameInput" maxlength="15" value="Wanderer" autocomplete="off"></label>
-        <label>SYMBOL<input id="charInput" maxlength="1" value="@" autocomplete="off"></label>
-        <label>COLOR<input id="colorInput" type="color" value="#00ff88"></label>
-      </div>
-      <button id="joinBtn" onclick="joinGame()">[ ENTER WORLD ]</button>
-      <div class="start-hint">WASD / ARROWS · SCROLL to zoom · ENTER to chat</div>
-    </div>
-  </div>
-
-  <!-- GAME HUD -->
-  <div id="hud" style="display:none">
-    <canvas id="gameCanvas"></canvas>
-
-    <div id="chatLog"></div>
-
-    <div id="sidebar">
-      <div id="sidebarTitle">PLAYERS</div>
-      <div id="playerList"></div>
-      <div id="coords">0, 0</div>
-      <div id="zoomDisplay">ZOOM 1×</div>
+<!-- ── START SCREEN ─────────────────────────────────── -->
+<div id="startScreen">
+  <div id="startBox">
+    <div id="logoBlock">
+      <div class="logo-sub">— TACTICAL ASCII ARENA —</div>
+      <div class="logo-main">TANK<br>TACTICS</div>
+      <div class="logo-sub">MULTIPLAYER · PERSISTENT · BRUTAL</div>
     </div>
 
-    <input id="chatInput" placeholder="press enter to chat..." maxlength="120" autocomplete="off">
-    <div id="keyHints">WASD · SCROLL zoom · SPACE center</div>
+    <div class="field-group">
+      <div class="field-row">
+        <span class="field-label">CALLSIGN</span>
+        <input id="nameInput" maxlength="15" value="Wanderer" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field-row">
+        <span class="field-label">SYMBOL</span>
+        <input id="charInput" maxlength="1" value="@" autocomplete="off" class="char-input">
+        <span class="field-hint">your identity on the battlefield</span>
+      </div>
+      <div class="field-row">
+        <span class="field-label">COLOR</span>
+        <input id="colorInput" type="color" value="#00ff88">
+        <span class="field-hint">your clan color</span>
+      </div>
+    </div>
+
+    <button id="joinBtn" onclick="joinGame()">ENTER THE ARENA</button>
+
+    <div class="controls-hint">
+      <span>WASD · move</span>
+      <span>CLICK · target</span>
+      <span>SCROLL · zoom</span>
+      <span>SPACE · find self</span>
+      <span>ENTER · chat</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── GAME ─────────────────────────────────────────── -->
+<div id="gameWrap" style="display:none">
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Left panel: status + leaderboard -->
+  <div id="leftPanel">
+    <div class="panel-title">STATUS</div>
+    <div id="myStatus">
+      <div id="myChar" class="big-char">@</div>
+      <div id="myName" class="status-name">—</div>
+      <div class="stat-row">
+        <span class="stat-label">HP</span>
+        <div id="hpBar" class="bar-wrap"><div id="hpFill" class="bar-fill hp-fill"></div></div>
+        <span id="hpNum" class="stat-num">5</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">AP</span>
+        <div id="apBar" class="bar-wrap"><div id="apFill" class="bar-fill ap-fill"></div></div>
+        <span id="apNum" class="stat-num">3</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">KILLS</span>
+        <span id="myKills" class="stat-num kill-count">0</span>
+      </div>
+      <div id="apRegen" class="regen-bar">
+        <div class="regen-label">REGEN</div>
+        <div id="regenFill" class="regen-fill"></div>
+      </div>
+    </div>
+
+    <div class="panel-title" style="margin-top:16px">LEADERBOARD</div>
+    <div id="leaderboard"></div>
+
+    <div class="panel-title" style="margin-top:16px">NEARBY</div>
+    <div id="nearbyList"></div>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js"></script>
+  <!-- Right panel: action buttons + coords -->
+  <div id="rightPanel">
+    <div class="panel-title">ACTIONS</div>
+    <div id="actionButtons">
+      <div class="action-hint">Click a player on the map to target them, then use actions below.</div>
+      <div id="targetDisplay" style="display:none">
+        <div class="target-label">TARGET</div>
+        <div id="targetName" class="target-name">—</div>
+        <div id="targetHp" class="target-hp"></div>
+      </div>
+      <button class="action-btn" id="btnAttack" onclick="doAttack(0)" title="2 AP">⚔ ATTACK <span class="ap-cost">2AP</span></button>
+      <button class="action-btn" id="btnAttackX" onclick="doAttack(1)" title="3 AP, +1 range">⚔ ATTACK +1 <span class="ap-cost">3AP</span></button>
+      <button class="action-btn" id="btnAttackXX" onclick="doAttack(2)" title="4 AP, +2 range">⚔ ATTACK +2 <span class="ap-cost">4AP</span></button>
+      <button class="action-btn donate-btn" id="btnDonate1" onclick="doDonate(1)" title="Donate 1 AP">⬆ GIVE 1 AP <span class="ap-cost">1AP</span></button>
+      <button class="action-btn donate-btn" id="btnDonate3" onclick="doDonate(3)" title="Donate 3 AP">⬆ GIVE 3 AP <span class="ap-cost">3AP</span></button>
+    </div>
+
+    <div class="panel-title" style="margin-top:16px">MAP</div>
+    <div id="coordsDisplay">0, 0</div>
+    <div id="zoomDisplay">ZOOM 1×</div>
+    <div class="panel-title" style="margin-top:16px">PLAYERS</div>
+    <div id="playerCount">0 alive</div>
+  </div>
+
+  <!-- Chat -->
+  <div id="chatLog"></div>
+  <div id="chatWrap">
+    <span id="chatPrefix">›</span>
+    <input id="chatInput" placeholder="type and press enter  ·  /clan NAME  ·  /invite NAME" maxlength="120" autocomplete="off" spellcheck="false">
+  </div>
+</div>
+
+<!-- Win overlay -->
+<div id="winOverlay" style="display:none">
+  <div id="winBox">
+    <div class="win-label">VICTOR</div>
+    <div id="winChar" class="win-char">@</div>
+    <div id="winName" class="win-name"></div>
+    <div id="winKills" class="win-kills"></div>
+    <div class="win-reset">resetting in 12s…</div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
 </body>
 </html>
