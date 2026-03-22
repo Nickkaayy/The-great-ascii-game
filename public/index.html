@@ -10,13 +10,12 @@
 </head>
 <body>
 
-<!-- ── START SCREEN ─────────────────────────────────── -->
-<div id="startScreen">
-  <div id="startBox">
+<!-- ── LOBBY ──────────────────────────────────────────────── -->
+<div id="lobby">
+  <div id="lobbyBox">
     <div id="logoBlock">
-      <div class="logo-sub">— TACTICAL ASCII ARENA —</div>
+      <div class="logo-sub">— ASCII ARENA —</div>
       <div class="logo-main">TANK<br>TACTICS</div>
-      <div class="logo-sub">MULTIPLAYER · PERSISTENT · BRUTAL</div>
     </div>
 
     <div class="field-group">
@@ -27,104 +26,118 @@
       <div class="field-row">
         <span class="field-label">SYMBOL</span>
         <input id="charInput" maxlength="1" value="@" autocomplete="off" class="char-input">
-        <span class="field-hint">your identity on the battlefield</span>
       </div>
       <div class="field-row">
         <span class="field-label">COLOR</span>
         <input id="colorInput" type="color" value="#00ff88">
-        <span class="field-hint">your clan color</span>
       </div>
     </div>
 
-    <button id="joinBtn" onclick="joinGame()">ENTER THE ARENA</button>
+    <div id="lobbyTabs">
+      <button class="tab-btn active" onclick="showTab('create')">CREATE ROOM</button>
+      <button class="tab-btn" onclick="showTab('join')">JOIN ROOM</button>
+    </div>
+
+    <div id="tabCreate" class="tab-panel">
+      <div class="field-row" style="margin-bottom:16px">
+        <span class="field-label">MAP SIZE</span>
+        <div id="sizeButtons">
+          <button class="size-btn active" data-size="small" onclick="selectSize('small')">SMALL<br><span>60×40</span></button>
+          <button class="size-btn" data-size="medium" onclick="selectSize('medium')">MEDIUM<br><span>120×75</span></button>
+          <button class="size-btn" data-size="large" onclick="selectSize('large')">LARGE<br><span>240×150</span></button>
+        </div>
+      </div>
+      <button class="main-btn" onclick="createRoom()">CREATE &amp; HOST</button>
+    </div>
+
+    <div id="tabJoin" class="tab-panel" style="display:none">
+      <div class="field-row" style="margin-bottom:16px">
+        <span class="field-label">ROOM CODE</span>
+        <input id="codeInput" maxlength="4" placeholder="XXXX" autocomplete="off" class="code-input" spellcheck="false">
+      </div>
+      <button class="main-btn" onclick="joinRoom()">JOIN ROOM</button>
+    </div>
+
+    <div id="lobbyError" class="error-msg"></div>
 
     <div class="controls-hint">
-      <span>WASD · move</span>
-      <span>CLICK · target</span>
-      <span>SCROLL · zoom</span>
-      <span>SPACE · find self</span>
-      <span>ENTER · chat</span>
+      WASD · move &nbsp;·&nbsp; MOUSE · aim &nbsp;·&nbsp; CLICK · shoot &nbsp;·&nbsp; SCROLL · zoom &nbsp;·&nbsp; SPACE · center
     </div>
   </div>
 </div>
 
-<!-- ── GAME ─────────────────────────────────────────── -->
+<!-- ── GAME ───────────────────────────────────────────────── -->
 <div id="gameWrap" style="display:none">
   <canvas id="gameCanvas"></canvas>
 
-  <!-- Left panel: status + leaderboard -->
+  <!-- Left panel -->
   <div id="leftPanel">
-    <div class="panel-title">STATUS</div>
+    <div class="panel-title">ROOM</div>
+    <div id="roomCode" class="room-code-display">????</div>
+    <div id="roomSize" class="room-size-display"></div>
+
+    <div class="panel-title" style="margin-top:14px">STATUS</div>
     <div id="myStatus">
       <div id="myChar" class="big-char">@</div>
       <div id="myName" class="status-name">—</div>
       <div class="stat-row">
         <span class="stat-label">HP</span>
-        <div id="hpBar" class="bar-wrap"><div id="hpFill" class="bar-fill hp-fill"></div></div>
+        <div class="bar-wrap"><div id="hpFill" class="bar-fill hp-fill"></div></div>
         <span id="hpNum" class="stat-num">5</span>
       </div>
       <div class="stat-row">
-        <span class="stat-label">AP</span>
-        <div id="apBar" class="bar-wrap"><div id="apFill" class="bar-fill ap-fill"></div></div>
-        <span id="apNum" class="stat-num">3</span>
+        <span class="stat-label">🔵</span>
+        <div class="bar-wrap"><div id="ammoFill" class="bar-fill ammo-fill"></div></div>
+        <span id="ammoNum" class="stat-num">10</span>
       </div>
       <div class="stat-row">
         <span class="stat-label">KILLS</span>
         <span id="myKills" class="stat-num kill-count">0</span>
       </div>
-      <div id="apRegen" class="regen-bar">
-        <div class="regen-label">REGEN</div>
-        <div id="regenFill" class="regen-fill"></div>
-      </div>
     </div>
 
-    <div class="panel-title" style="margin-top:16px">LEADERBOARD</div>
+    <div class="panel-title" style="margin-top:14px">LEADERBOARD</div>
     <div id="leaderboard"></div>
-
-    <div class="panel-title" style="margin-top:16px">NEARBY</div>
-    <div id="nearbyList"></div>
   </div>
 
-  <!-- Right panel: action buttons + coords -->
+  <!-- Right panel -->
   <div id="rightPanel">
-    <div class="panel-title">ACTIONS</div>
-    <div id="actionButtons">
-      <div class="action-hint">Click a player on the map to target them, then use actions below.</div>
-      <div id="targetDisplay" style="display:none">
-        <div class="target-label">TARGET</div>
-        <div id="targetName" class="target-name">—</div>
-        <div id="targetHp" class="target-hp"></div>
-      </div>
-      <button class="action-btn" id="btnAttack" onclick="doAttack(0)" title="2 AP">⚔ ATTACK <span class="ap-cost">2AP</span></button>
-      <button class="action-btn" id="btnAttackX" onclick="doAttack(1)" title="3 AP, +1 range">⚔ ATTACK +1 <span class="ap-cost">3AP</span></button>
-      <button class="action-btn" id="btnAttackXX" onclick="doAttack(2)" title="4 AP, +2 range">⚔ ATTACK +2 <span class="ap-cost">4AP</span></button>
-      <button class="action-btn donate-btn" id="btnDonate1" onclick="doDonate(1)" title="Donate 1 AP">⬆ GIVE 1 AP <span class="ap-cost">1AP</span></button>
-      <button class="action-btn donate-btn" id="btnDonate3" onclick="doDonate(3)" title="Donate 3 AP">⬆ GIVE 3 AP <span class="ap-cost">3AP</span></button>
-    </div>
-
-    <div class="panel-title" style="margin-top:16px">MAP</div>
+    <div class="panel-title">PLAYERS</div>
+    <div id="playerList"></div>
+    <div class="panel-title" style="margin-top:14px">COORDS</div>
     <div id="coordsDisplay">0, 0</div>
     <div id="zoomDisplay">ZOOM 1×</div>
-    <div class="panel-title" style="margin-top:16px">PLAYERS</div>
-    <div id="playerCount">0 alive</div>
+    <div class="panel-title" style="margin-top:14px">LEGEND</div>
+    <div class="legend">
+      <div><span style="color:#3a4048">#</span> wall</div>
+      <div><span style="color:#1d4a18">T</span> tree</div>
+      <div><span style="color:#244018">"</span> bush</div>
+      <div><span style="color:#0d3a50">~</span> water</div>
+      <div><span style="color:#00ff88">+</span> health</div>
+      <div><span style="color:#ffa500">•</span> ammo</div>
+    </div>
   </div>
 
   <!-- Chat -->
   <div id="chatLog"></div>
   <div id="chatWrap">
     <span id="chatPrefix">›</span>
-    <input id="chatInput" placeholder="type and press enter  ·  /clan NAME  ·  /invite NAME" maxlength="120" autocomplete="off" spellcheck="false">
+    <input id="chatInput" placeholder="enter to chat…" maxlength="120" autocomplete="off" spellcheck="false">
   </div>
-</div>
 
-<!-- Win overlay -->
-<div id="winOverlay" style="display:none">
-  <div id="winBox">
-    <div class="win-label">VICTOR</div>
-    <div id="winChar" class="win-char">@</div>
-    <div id="winName" class="win-name"></div>
-    <div id="winKills" class="win-kills"></div>
-    <div class="win-reset">resetting in 12s…</div>
+  <!-- Dead overlay -->
+  <div id="deadOverlay" style="display:none">
+    <div id="deadMsg">YOU DIED</div>
+    <div id="deadSub">respawning…</div>
+  </div>
+
+  <!-- Room closed overlay -->
+  <div id="roomClosedOverlay" style="display:none">
+    <div class="overlay-box">
+      <div class="overlay-title">ROOM CLOSED</div>
+      <div class="overlay-sub">The host has left.</div>
+      <button class="main-btn" onclick="location.reload()">BACK TO LOBBY</button>
+    </div>
   </div>
 </div>
 

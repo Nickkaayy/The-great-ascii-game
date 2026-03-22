@@ -3,483 +3,330 @@ const socket = io();
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let myId = null;
-let players = {};
+let players = {};   // id → { ...serverData, renderX, renderY }
+let pickups = {};
+let bullets = {};   // id → { x, y, dx, dy, ownerId }
 let mapTiles = [];
-let MAP_W = 300, MAP_H = 150;
-let CFG = {};
+let MAP_W = 0, MAP_H = 0;
+const TILE = 24;
 
-// Camera: center of view in world-tile coords
+// Camera (pixel-space center of viewport)
 let camX = 0, camY = 0;
-
-// Zoom: pixels per cell
-let cellSize = 7;         // start zoomed out to see full map
-const CELL_MIN = 4;
-const CELL_MAX = 32;
+let cellSize = 18;  // px per tile for rendering
+const CELL_MIN = 6, CELL_MAX = 36;
 
 // Input
-const pressedKeys = new Set();
+const keysDown = new Set();
 let chatFocused = false;
+let mouseX = 0, mouseY = 0; // screen coords
 
-// Targeting
-let targetId = null;
+// Lobby state
+let selectedSize = 'medium';
 
 // DOM
 const canvas       = document.getElementById('gameCanvas');
 const ctx          = canvas.getContext('2d');
+const lobby        = document.getElementById('lobby');
+const gameWrap     = document.getElementById('gameWrap');
 const chatLogEl    = document.getElementById('chatLog');
 const chatInput    = document.getElementById('chatInput');
-const startScreen  = document.getElementById('startScreen');
-const gameWrap     = document.getElementById('gameWrap');
 const coordsEl     = document.getElementById('coordsDisplay');
 const zoomEl       = document.getElementById('zoomDisplay');
 const leaderboardEl= document.getElementById('leaderboard');
-const nearbyEl     = document.getElementById('nearbyList');
-const playerCountEl= document.getElementById('playerCount');
-const winOverlay   = document.getElementById('winOverlay');
-const targetDisplay= document.getElementById('targetDisplay');
+const playerListEl = document.getElementById('playerList');
+const deadOverlay  = document.getElementById('deadOverlay');
+const roomCodeEl   = document.getElementById('roomCode');
+const roomSizeEl   = document.getElementById('roomSize');
 
-// My status els
-const myCharEl  = document.getElementById('myChar');
-const myNameEl  = document.getElementById('myName');
-const hpFillEl  = document.getElementById('hpFill');
-const apFillEl  = document.getElementById('apFill');
-const hpNumEl   = document.getElementById('hpNum');
-const apNumEl   = document.getElementById('apNum');
-const myKillsEl = document.getElementById('myKills');
-
-// ── JOIN ──────────────────────────────────────────────────────────────────────
-function joinGame() {
-  const name  = document.getElementById('nameInput').value.trim() || 'Wanderer';
-  const char  = document.getElementById('charInput').value[0] || '@';
-  const color = document.getElementById('colorInput').value || '#00ff88';
-  socket.emit('setInfo', { name, char, color });
-  startScreen.style.display = 'none';
-  gameWrap.style.display = 'block';
-  resizeCanvas();
+// ── LOBBY UI ──────────────────────────────────────────────────────────────────
+function showTab(t) {
+  document.getElementById('tabCreate').style.display = t==='create' ? '' : 'none';
+  document.getElementById('tabJoin').style.display   = t==='join'   ? '' : 'none';
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active', (i===0&&t==='create')||(i===1&&t==='join')));
+}
+function selectSize(s) {
+  selectedSize = s;
+  document.querySelectorAll('.size-btn').forEach(b => b.classList.toggle('active', b.dataset.size===s));
+}
+function getLobbyData() {
+  return {
+    name:  document.getElementById('nameInput').value.trim() || 'Wanderer',
+    char:  document.getElementById('charInput').value[0] || '@',
+    color: document.getElementById('colorInput').value || '#00ff88',
+  };
+}
+function createRoom() {
+  const d = getLobbyData();
+  socket.emit('createRoom', { ...d, mapSize: selectedSize });
+}
+function joinRoom() {
+  const code = document.getElementById('codeInput').value.trim().toUpperCase();
+  if (code.length !== 4) { showLobbyError('Enter a 4-letter room code'); return; }
+  const d = getLobbyData();
+  socket.emit('joinRoom', { ...d, code });
+}
+function showLobbyError(msg) {
+  document.getElementById('lobbyError').textContent = msg;
 }
 
-// ── CANVAS SETUP ─────────────────────────────────────────────────────────────
+// ── CANVAS ────────────────────────────────────────────────────────────────────
 function resizeCanvas() {
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
-  render();
 }
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', () => { resizeCanvas(); });
 
-// ── TILE COLORS & CHARS ───────────────────────────────────────────────────────
+// ── TILE RENDERING ────────────────────────────────────────────────────────────
 const TILE_STYLE = {
-  '.': { char: '.', color: '#1a2a18', bright: '#233020' },
-  '#': { char: '#', color: '#3a4048', bright: '#505860' },
-  '~': { char: '~', color: '#0d3a50', bright: '#1a5070' },
-  'T': { char: 'T', color: '#1d4a18', bright: '#2a6020' },
-  '"': { char: '"', color: '#244018', bright: '#305520' },
+  '.': { ch:'.', col:'#1a2a18' },
+  '#': { ch:'#', col:'#3a4048' },
+  '~': { ch:'~', col:'#0d3a50' },
+  'T': { ch:'T', col:'#1d4a18' },
+  '"': { ch:'"', col:'#244018' },
 };
 
-function getTileStyle(ch) {
-  return TILE_STYLE[ch] || TILE_STYLE['.'];
-}
-
-// ── RENDERING ─────────────────────────────────────────────────────────────────
-const PANEL_W = 180;
-const CHAT_H  = 38;
+const PANEL_W = 168;
+const CHAT_H  = 36;
 
 function setFont(size) {
-  // Force square cells: Share Tech Mono natural ratio ~0.58
-  // We set font-size so that one char width ≈ cellSize
   const fs = Math.round(size / 0.58);
   ctx.font = `${fs}px 'Share Tech Mono', monospace`;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
 }
 
-function render() {
+// Convert world-pixel coords to screen coords
+function worldToScreen(wx, wy) {
+  const vpCX = PANEL_W + (canvas.width  - PANEL_W*2) / 2;
+  const vpCY =           (canvas.height - CHAT_H)    / 2;
+  // Scale: cellSize px per tile; world coords are in pixels (TILE=24 per tile)
+  const scale = cellSize / TILE;
+  return {
+    sx: vpCX + (wx - camX) * scale,
+    sy: vpCY + (wy - camY) * scale,
+  };
+}
+
+function screenToWorld(sx, sy) {
+  const vpCX = PANEL_W + (canvas.width  - PANEL_W*2) / 2;
+  const vpCY =           (canvas.height - CHAT_H)    / 2;
+  const scale = cellSize / TILE;
+  return {
+    wx: camX + (sx - vpCX) / scale,
+    wy: camY + (sy - vpCY) / scale,
+  };
+}
+
+// ── MAIN RENDER LOOP ──────────────────────────────────────────────────────────
+let lastFrame = 0;
+function gameLoop(ts) {
+  requestAnimationFrame(gameLoop);
+  const dt = Math.min((ts - lastFrame) / 1000, 0.05);
+  lastFrame = ts;
+
   if (!myId || !mapTiles.length) return;
 
+  // Smooth camera toward my player
+  const me = players[myId];
+  if (me) {
+    camX += (me.renderX - camX) * 0.12;
+    camY += (me.renderY - camY) * 0.12;
+  }
+
+  // Interpolate all player render positions
+  for (const p of Object.values(players)) {
+    if (p.renderX === undefined) { p.renderX = p.x; p.renderY = p.y; }
+    p.renderX += (p.x - p.renderX) * 0.18;
+    p.renderY += (p.y - p.renderY) * 0.18;
+  }
+
+  // Move bullets client-side (visual only; server is authoritative)
+  const BULLET_SPEED_PX = 280;
+  for (const b of Object.values(bullets)) {
+    b.x += b.dx * BULLET_SPEED_PX * dt;
+    b.y += b.dy * BULLET_SPEED_PX * dt;
+    b.life -= dt;
+  }
+  // Remove stale bullets
+  for (const [id, b] of Object.entries(bullets)) {
+    if (b.life <= 0) delete bullets[id];
+  }
+
+  draw();
+  updateHUD();
+}
+requestAnimationFrame(gameLoop);
+
+function draw() {
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#07090b';
   ctx.fillRect(0, 0, W, H);
 
+  const vpLeft   = PANEL_W, vpRight = W - PANEL_W;
+  const vpTop    = 0,       vpBottom = H - CHAT_H;
+  const vpW = vpRight - vpLeft, vpH = vpBottom - vpTop;
+  const scale = cellSize / TILE;
+
+  // Clip to viewport
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(vpLeft, vpTop, vpW, vpH);
+  ctx.clip();
+
   setFont(cellSize);
 
-  // Viewport excluding panels
-  const vpLeft   = PANEL_W;
-  const vpRight  = W - PANEL_W;
-  const vpTop    = 0;
-  const vpBottom = H - CHAT_H;
-  const vpW = vpRight - vpLeft;
-  const vpH = vpBottom - vpTop;
+  const halfCols = Math.ceil(vpW / cellSize / 2) + 2;
+  const halfRows = Math.ceil(vpH / cellSize / 2) + 2;
 
-  const cols = Math.ceil(vpW / cellSize) + 2;
-  const rows = Math.ceil(vpH / cellSize) + 2;
+  const camTileX = camX / TILE, camTileY = camY / TILE;
+  const startTX = Math.floor(camTileX - halfCols);
+  const startTY = Math.floor(camTileY - halfRows);
+  const endTX   = Math.ceil(camTileX  + halfCols);
+  const endTY   = Math.ceil(camTileY  + halfRows);
 
-  const startWX = Math.floor(camX - cols / 2);
-  const startWY = Math.floor(camY - rows / 2);
+  const vpCX = vpLeft + vpW/2, vpCY = vpTop + vpH/2;
 
-  const offX = vpLeft + vpW / 2 - (camX - startWX) * cellSize;
-  const offY = vpTop  + vpH / 2 - (camY - startWY) * cellSize;
-
-  // Build player lookup
-  const playerAt = {};
-  for (const id in players) {
-    const p = players[id];
-    if (p.alive) playerAt[`${p.x},${p.y}`] = p;
-  }
-
-  // ── Draw tiles + players ──
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const wx = startWX + col;
-      const wy = startWY + row;
-
-      // Clip to map bounds
-      if (wx < 0 || wx >= MAP_W || wy < 0 || wy >= MAP_H) continue;
-
-      const px = offX + col * cellSize + cellSize * 0.5;
-      const py = offY + row * cellSize + cellSize * 0.5;
-
-      // Don't draw outside viewport
-      if (px < vpLeft - cellSize || px > vpRight + cellSize) continue;
-      if (py < vpTop  - cellSize || py > vpBottom + cellSize) continue;
-
-      const tileCh = mapTiles[wy]?.[wx] || '.';
-      const ts = getTileStyle(tileCh);
-      const player = playerAt[`${wx},${wy}`];
-
-      if (player) {
-        const isMe = player.id === myId;
-        const isTarget = player.id === targetId;
-
-        // Draw tile dim behind player
-        ctx.fillStyle = ts.color;
-        ctx.fillText(ts.char, px, py);
-
-        // Glow for self
-        if (isMe) {
-          ctx.shadowColor = player.color;
-          ctx.shadowBlur  = cellSize * 1.5;
-        } else if (isTarget) {
-          ctx.shadowColor = '#ffa500';
-          ctx.shadowBlur  = cellSize * 1.2;
-        }
-
-        // Dead player indicator (ghost)
-        ctx.fillStyle = player.color || '#00ff88';
-        ctx.fillText(player.char || '@', px, py);
-        ctx.shadowBlur = 0;
-
-        // HP bar under player (tiny)
-        if (cellSize >= 10 && CFG.HP_MAX) {
-          const barW = cellSize - 2;
-          const barH = 2;
-          const bx = px - barW / 2;
-          const by = py + cellSize * 0.5 + 1;
-          ctx.fillStyle = '#200a0a';
-          ctx.fillRect(bx, by, barW, barH);
-          ctx.fillStyle = player.hp <= 1 ? '#ff3a4a' : '#ff6040';
-          ctx.fillRect(bx, by, barW * (player.hp / CFG.HP_MAX), barH);
-        }
-
-      } else {
-        // Slightly brighten border tiles
-        const isBorder = wx === 0 || wx === MAP_W-1 || wy === 0 || wy === MAP_H-1;
-        ctx.fillStyle = isBorder ? '#404850' : ts.color;
-        ctx.fillText(ts.char, px, py);
-      }
+  // ── Tiles ──
+  for (let ty = startTY; ty <= endTY; ty++) {
+    for (let tx = startTX; tx <= endTX; tx++) {
+      if (tx<0||tx>=MAP_W||ty<0||ty>=MAP_H) continue;
+      const ch = mapTiles[ty]?.[tx] || '.';
+      const ts = TILE_STYLE[ch] || TILE_STYLE['.'];
+      const sx = vpCX + (tx*TILE + TILE/2 - camX) * scale;
+      const sy = vpCY + (ty*TILE + TILE/2 - camY) * scale;
+      ctx.fillStyle = ts.col;
+      ctx.fillText(ts.ch, sx, sy);
     }
   }
 
-  // ── Attack range ring for self (when targeting) ──
-  if (targetId && players[myId] && cellSize >= 8) {
-    const me = players[myId];
-    const rangeTiles = CFG.ATTACK_RANGE_DEFAULT || 2;
-    const ringPx = rangeTiles * cellSize;
-    const myPx = offX + (me.x - startWX) * cellSize + cellSize * 0.5;
-    const myPy = offY + (me.y - startWY) * cellSize + cellSize * 0.5;
-    ctx.strokeStyle = 'rgba(255,164,0,0.2)';
+  // ── Pickups ──
+  for (const pk of Object.values(pickups)) {
+    const sx = vpCX + (pk.x - camX) * scale;
+    const sy = vpCY + (pk.y - camY) * scale;
+    if (pk.type === 'hp') {
+      ctx.fillStyle = '#00ff88';
+      ctx.fillText('+', sx, sy);
+    } else {
+      ctx.fillStyle = '#ffa500';
+      ctx.fillText('•', sx, sy);
+    }
+  }
+
+  // ── Players ──
+  for (const p of Object.values(players)) {
+    if (!p.alive) continue;
+    const sx = vpCX + (p.renderX - camX) * scale;
+    const sy = vpCY + (p.renderY - camY) * scale;
+
+    const isMe = p.id === myId;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur  = isMe ? cellSize * 1.4 : cellSize * 0.8;
+    ctx.fillStyle   = p.color;
+    ctx.fillText(p.char, sx, sy);
+    ctx.shadowBlur  = 0;
+
+    // HP bar
+    if (cellSize >= 10) {
+      const bw = cellSize - 2, bh = 2;
+      const bx = sx - bw/2, by = sy + cellSize*0.55;
+      ctx.fillStyle = '#200a0a';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = p.hp <= 1 ? '#ff3a4a' : '#e05030';
+      ctx.fillRect(bx, by, bw * (p.hp / 5), bh);
+    }
+
+    // Name tag (only when zoomed in)
+    if (cellSize >= 14) {
+      ctx.font = `${Math.max(8, Math.round(cellSize * 0.45))}px 'Share Tech Mono', monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = isMe ? 'rgba(57,255,138,0.6)' : 'rgba(200,220,232,0.4)';
+      ctx.fillText(p.name, sx, sy - cellSize * 0.72);
+      setFont(cellSize);
+    }
+  }
+
+  // ── Bullets ──
+  for (const b of Object.values(bullets)) {
+    const sx = vpCX + (b.x - camX) * scale;
+    const sy = vpCY + (b.y - camY) * scale;
+    const owner = players[b.ownerId];
+    const col = owner?.color || '#ffffff';
+    ctx.shadowColor = col;
+    ctx.shadowBlur  = 6;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(2, cellSize * 0.14), 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // ── Aim line (from me to mouse) ──
+  const me = players[myId];
+  if (me && me.alive) {
+    const msx = vpCX + (me.renderX - camX) * scale;
+    const msy = vpCY + (me.renderY - camY) * scale;
+    const dx = mouseX - msx, dy = mouseY - msy;
+    const len = Math.sqrt(dx*dx+dy*dy) || 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.strokeRect(myPx - ringPx - cellSize*0.5, myPy - ringPx - cellSize*0.5, ringPx*2+cellSize, ringPx*2+cellSize);
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath();
+    ctx.moveTo(msx, msy);
+    ctx.lineTo(msx + dx/len*60, msy + dy/len*60);
+    ctx.stroke();
     ctx.setLineDash([]);
   }
 
-  // ── Map border outline ──
-  const bx0 = offX + (0 - startWX) * cellSize + cellSize * 0.5;
-  const by0 = offY + (0 - startWY) * cellSize + cellSize * 0.5;
-  const bxW = MAP_W * cellSize;
-  const byH = MAP_H * cellSize;
-  ctx.strokeStyle = 'rgba(100,140,180,0.15)';
+  // ── Map border ──
+  const bsx = vpCX + (0 - camX) * scale;
+  const bsy = vpCY + (0 - camY) * scale;
+  ctx.strokeStyle = 'rgba(100,140,180,0.12)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(bx0 - cellSize*0.5, by0 - cellSize*0.5, bxW, byH);
+  ctx.strokeRect(bsx, bsy, MAP_W*TILE*scale, MAP_H*TILE*scale);
 
-  // ── Update HUD ──
-  updateHUD();
+  ctx.restore();
 }
 
-// ── HUD UPDATES ───────────────────────────────────────────────────────────────
+// ── HUD ───────────────────────────────────────────────────────────────────────
 function updateHUD() {
   const me = players[myId];
   if (!me) return;
 
-  // Coords
-  coordsEl.textContent = `${me.x}, ${me.y}`;
-  zoomEl.textContent   = `ZOOM ${(cellSize / 16).toFixed(2)}×`;
+  const tx = Math.floor(me.x / TILE), ty = Math.floor(me.y / TILE);
+  coordsEl.textContent = `${tx}, ${ty}`;
+  zoomEl.textContent   = `ZOOM ${(cellSize/16).toFixed(2)}×`;
 
-  // My status
-  myCharEl.textContent  = me.char;
-  myCharEl.style.color  = me.color;
-  myNameEl.textContent  = me.name;
-  hpNumEl.textContent   = me.hp;
-  apNumEl.textContent   = me.ap;
-  if (CFG.HP_MAX) hpFillEl.style.width = `${(me.hp / CFG.HP_MAX) * 100}%`;
-  if (CFG.AP_MAX) apFillEl.style.width = `${(me.ap / CFG.AP_MAX) * 100}%`;
-  myKillsEl.textContent = me.kills;
+  document.getElementById('myChar').textContent = me.char;
+  document.getElementById('myChar').style.color = me.color;
+  document.getElementById('myName').textContent = me.name;
+  document.getElementById('hpNum').textContent  = me.hp;
+  document.getElementById('ammoNum').textContent= me.bullets;
+  document.getElementById('hpFill').style.width   = `${(me.hp/5)*100}%`;
+  document.getElementById('ammoFill').style.width = `${Math.min(100,(me.bullets/10)*100)}%`;
+  document.getElementById('myKills').textContent  = me.kills;
 
-  // Target display
-  if (targetId && players[targetId]) {
-    const t = players[targetId];
-    targetDisplay.style.display = 'block';
-    document.getElementById('targetName').textContent = `${t.char} ${t.name}`;
-    document.getElementById('targetName').style.color = t.color;
-    document.getElementById('targetHp').textContent   = `HP: ${'♥'.repeat(t.hp)}${'♡'.repeat(Math.max(0,CFG.HP_MAX-t.hp))}`;
-  } else {
-    targetDisplay.style.display = 'none';
-  }
-
-  // Leaderboard (top 8 by kills)
-  const sorted = Object.values(players)
-    .filter(p => p.alive)
-    .sort((a,b) => b.kills - a.kills)
-    .slice(0, 8);
-
-  leaderboardEl.innerHTML = sorted.map(p => `
+  // Leaderboard
+  const sorted = Object.values(players).sort((a,b)=>b.kills-a.kills).slice(0,8);
+  leaderboardEl.innerHTML = sorted.map(p=>`
     <div class="lb-row ${p.id===myId?'lb-me':''}">
-      <span class="lb-char" style="color:${p.color}">${p.char}</span>
+      <span class="lb-char" style="color:${p.color}">${escHtml(p.char)}</span>
       <span class="lb-name">${escHtml(p.name)}</span>
       <span class="lb-kills">${p.kills}</span>
-      <span class="lb-hp">${p.hp}♥</span>
-    </div>
-  `).join('');
+    </div>`).join('');
 
-  // Player count
-  const alive = Object.values(players).filter(p=>p.alive).length;
-  playerCountEl.textContent = `${alive} alive · ${Object.keys(players).length} total`;
-
-  // Nearby players (within 20 tiles)
-  const nearby = Object.values(players)
-    .filter(p => p.id !== myId && p.alive)
-    .map(p => ({ ...p, dist: chebyshev(me.x, me.y, p.x, p.y) }))
-    .filter(p => p.dist <= 20)
-    .sort((a,b) => a.dist - b.dist)
-    .slice(0, 8);
-
-  nearbyEl.innerHTML = nearby.map(p => `
-    <div class="nearby-row" onclick="setTarget('${p.id}')">
-      <span class="nearby-char" style="color:${p.color}">${p.char}</span>
-      <span class="nearby-name">${escHtml(p.name)}</span>
-      <span class="nearby-dist">${p.dist}t</span>
-    </div>
-  `).join('') || '<div style="font-size:9px;color:var(--text-dim);letter-spacing:1px">none nearby</div>';
+  // Player list
+  playerListEl.innerHTML = Object.values(players).map(p=>`
+    <div class="pl-row">
+      <span class="pl-char" style="color:${p.color}">${escHtml(p.char)}</span>
+      <span class="pl-name">${escHtml(p.name)}</span>
+      <span class="pl-hp">${p.alive ? p.hp+'♥' : '☠'}</span>
+    </div>`).join('');
 }
 
-function chebyshev(ax, ay, bx, by) { return Math.max(Math.abs(ax-bx), Math.abs(ay-by)); }
-
-// ── TARGET ────────────────────────────────────────────────────────────────────
-function setTarget(id) {
-  targetId = id;
-  render();
-}
-
-// ── ACTIONS ───────────────────────────────────────────────────────────────────
-function doAttack(extraRange) {
-  if (!targetId) { addChat('System', 'No target selected. Click a player.', null, 'system'); return; }
-  socket.emit('attack', { targetId, extraRange });
-}
-
-function doDonate(amount) {
-  if (!targetId) { addChat('System', 'No target selected.', null, 'system'); return; }
-  socket.emit('donate', { targetId, amount });
-}
-
-// ── CANVAS CLICK → TARGET ─────────────────────────────────────────────────────
-canvas.addEventListener('click', (e) => {
-  if (!myId || !mapTiles.length) return;
-
-  const W = canvas.width, H = canvas.height;
-  const vpLeft = PANEL_W, vpRight = W - PANEL_W;
-  const vpTop = 0, vpBottom = H - CHAT_H;
-  const vpW = vpRight - vpLeft, vpH = vpBottom - vpTop;
-  const cols = Math.ceil(vpW / cellSize) + 2;
-  const rows = Math.ceil(vpH / cellSize) + 2;
-  const startWX = Math.floor(camX - cols / 2);
-  const startWY = Math.floor(camY - rows / 2);
-  const offX = vpLeft + vpW / 2 - (camX - startWX) * cellSize;
-  const offY = vpTop  + vpH / 2 - (camY - startWY) * cellSize;
-
-  const wx = Math.floor((e.clientX - offX) / cellSize) + startWX;
-  const wy = Math.floor((e.clientY - offY) / cellSize) + startWY;
-
-  // Find player at clicked tile
-  const clicked = Object.values(players).find(p => p.alive && p.x === wx && p.y === wy && p.id !== myId);
-  if (clicked) {
-    setTarget(clicked.id);
-  } else {
-    targetId = null;
-    render();
-  }
-});
-
-// ── ZOOM ──────────────────────────────────────────────────────────────────────
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  const delta = -Math.sign(e.deltaY);
-  cellSize = Math.max(CELL_MIN, Math.min(CELL_MAX, cellSize + delta * 2));
-  render();
-}, { passive: false });
-
-// ── CENTER ON ME ──────────────────────────────────────────────────────────────
-function centerOnMe() {
-  const me = players[myId];
-  if (me) { camX = me.x; camY = me.y; }
-}
-
-// ── CHAT ──────────────────────────────────────────────────────────────────────
-function addChat(name, message, color, type) {
-  const el = document.createElement('div');
-  el.className = `chat-msg${type ? ' '+type : ''}`;
-  if (name) {
-    el.innerHTML = `<span class="chat-name" style="color:${color||'var(--text-bright)'}">${escHtml(name)}</span>${escHtml(message)}`;
-  } else {
-    el.textContent = message;
-  }
-  chatLogEl.appendChild(el);
-  setTimeout(() => el.classList.add('fading'), 7000);
-  setTimeout(() => el.remove(), 8000);
-  while (chatLogEl.children.length > 10) chatLogEl.firstChild.remove();
-  chatLogEl.scrollTop = chatLogEl.scrollHeight;
-}
-
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ── SOCKET EVENTS ─────────────────────────────────────────────────────────────
-socket.on('joined', data => {
-  myId    = data.id;
-  players = data.players;
-  mapTiles= data.mapTiles;
-  MAP_W   = data.mapW;
-  MAP_H   = data.mapH;
-  CFG     = data.config;
-
-  // Start camera at map center (overview), not on player
-  camX = MAP_W / 2;
-  camY = MAP_H / 2;
-
-  if (gameWrap.style.display !== 'none') {
-    resizeCanvas();
-    render();
-  }
-  addChat(null, '— Entered the arena. SPACE to find yourself. —', null, 'system');
-});
-
-socket.on('newPlayer', p => {
-  players[p.id] = p;
-  addChat('System', `${p.char} ${p.name} has entered the arena.`, '#7a9ab0', 'system');
-  render();
-});
-
-socket.on('playerUpdate', data => {
-  if (players[data.id]) Object.assign(players[data.id], data);
-  if (data.id === myId) {
-    myCharEl.textContent = data.char;
-    myCharEl.style.color = data.color;
-  }
-  render();
-});
-
-socket.on('playerMoved', data => {
-  if (players[data.id]) { players[data.id].x = data.x; players[data.id].y = data.y; }
-  // Follow self
-  if (data.id === myId) { camX = data.x; camY = data.y; }
-  render();
-});
-
-socket.on('apUpdate', data => {
-  if (players[myId]) players[myId].ap = data.ap;
-  updateHUD();
-});
-
-socket.on('attacked', data => {
-  if (players[data.targetId]) players[data.targetId].hp = data.targetHp;
-  const t = players[data.targetId];
-  const a = players[data.attackerId];
-  if (t && a) {
-    addChat(null, `${a.char}${a.name} → ${t.char}${t.name} [${data.targetHp}HP left]`, null, 'kill');
-  }
-  render();
-});
-
-socket.on('playerDied', data => {
-  if (players[data.id]) { players[data.id].alive = false; players[data.id].hp = 0; }
-  const victim = players[data.id];
-  addChat(null, `☠ ${data.killerChar}${data.killerName} eliminated ${victim?.char||''}${victim?.name||data.id}`, null, 'kill');
-  if (data.id === targetId) { targetId = null; }
-  render();
-});
-
-socket.on('playerRespawned', data => {
-  if (players[data.id]) Object.assign(players[data.id], data);
-  if (data.id === myId) {
-    addChat(null, '— You have respawned. —', null, 'system');
-    camX = data.x; camY = data.y;
-  }
-  render();
-});
-
-socket.on('killUpdate', data => {
-  if (players[data.id]) players[data.id].kills = data.kills;
-  render();
-});
-
-socket.on('donated', data => {
-  addChat(null, `${players[data.fromId]?.name||data.fromId} gave ${data.amount}AP to ${players[data.toId]?.name||data.toId}`, null, 'system');
-});
-
-socket.on('chatMessage', data => {
-  addChat(`${data.char} ${data.name}`, ': ' + data.message, data.color);
-});
-
-socket.on('playerLeft', id => {
-  const p = players[id];
-  if (p) addChat('System', `${p.char} ${p.name} left.`, '#7a9ab0', 'system');
-  delete players[id];
-  if (id === targetId) targetId = null;
-  render();
-});
-
-socket.on('gameOver', data => {
-  winOverlay.style.display = 'flex';
-  document.getElementById('winChar').textContent = data.winnerChar;
-  document.getElementById('winChar').style.color = data.winnerColor;
-  document.getElementById('winName').textContent = data.winnerName;
-  document.getElementById('winKills').textContent = `${data.kills} kills`;
-  addChat(null, `★ ${data.winnerChar} ${data.winnerName} wins the arena! ★`, null, 'system');
-});
-
-socket.on('gameReset', data => {
-  players = data.players;
-  winOverlay.style.display = 'none';
-  targetId = null;
-  camX = MAP_W / 2;
-  camY = MAP_H / 2;
-  addChat(null, '— New round started. —', null, 'system');
-  render();
-});
-
-// ── KEYBOARD INPUT ────────────────────────────────────────────────────────────
+// ── INPUT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  if (startScreen.style.display !== 'none') return;
+  if (lobby.style.display !== 'none') return;
 
   if (e.key === 'Enter') {
     if (chatFocused) {
@@ -491,42 +338,199 @@ document.addEventListener('keydown', e => {
     }
     return;
   }
-
   if (chatFocused) return;
-  e.preventDefault();
-
-  const key = e.key.toLowerCase();
-  pressedKeys.add(key);
-  if (e.key === 'ArrowUp')    pressedKeys.add('w');
-  if (e.key === 'ArrowDown')  pressedKeys.add('s');
-  if (e.key === 'ArrowLeft')  pressedKeys.add('a');
-  if (e.key === 'ArrowRight') pressedKeys.add('d');
-
-  if (key === ' ') { centerOnMe(); render(); }
+  if (e.key === ' ') { e.preventDefault(); }
+  keysDown.add(e.key.toLowerCase());
+  sendInput();
 });
 
 document.addEventListener('keyup', e => {
-  const key = e.key.toLowerCase();
-  pressedKeys.delete(key);
-  if (e.key === 'ArrowUp')    pressedKeys.delete('w');
-  if (e.key === 'ArrowDown')  pressedKeys.delete('s');
-  if (e.key === 'ArrowLeft')  pressedKeys.delete('a');
-  if (e.key === 'ArrowRight') pressedKeys.delete('d');
+  keysDown.delete(e.key.toLowerCase());
+  sendInput();
 });
 
-chatInput.addEventListener('focus', () => { chatFocused = true;  pressedKeys.clear(); });
-chatInput.addEventListener('blur',  () => { chatFocused = false; pressedKeys.clear(); });
+chatInput.addEventListener('focus', () => { chatFocused = true;  keysDown.clear(); sendInput(); });
+chatInput.addEventListener('blur',  () => { chatFocused = false; keysDown.clear(); sendInput(); });
 
-// ── MOVEMENT LOOP ─────────────────────────────────────────────────────────────
-setInterval(() => {
-  if (chatFocused || !myId) return;
-  if (pressedKeys.has('w')) socket.emit('move', 'up');
-  if (pressedKeys.has('s')) socket.emit('move', 'down');
-  if (pressedKeys.has('a')) socket.emit('move', 'left');
-  if (pressedKeys.has('d')) socket.emit('move', 'right');
-}, 90);
+function sendInput() {
+  if (!myId) return;
+  let mx = 0, my = 0;
+  if (keysDown.has('w') || keysDown.has('arrowup'))    my -= 1;
+  if (keysDown.has('s') || keysDown.has('arrowdown'))  my += 1;
+  if (keysDown.has('a') || keysDown.has('arrowleft'))  mx -= 1;
+  if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
+  socket.emit('input', { moveX: mx, moveY: my });
+}
 
-// ── RENDER LOOP (for AP bar animation etc.) ───────────────────────────────────
-setInterval(() => {
-  if (myId && mapTiles.length) render();
-}, 500);
+// Mouse track
+canvas.addEventListener('mousemove', e => {
+  mouseX = e.clientX; mouseY = e.clientY;
+});
+
+// Shoot on click
+canvas.addEventListener('click', e => {
+  if (!myId || chatFocused) return;
+  const me = players[myId];
+  if (!me || !me.alive) return;
+
+  const scale = cellSize / TILE;
+  const vpLeft = PANEL_W;
+  const vpCX = vpLeft + (canvas.width - PANEL_W*2) / 2;
+  const vpCY = (canvas.height - CHAT_H) / 2;
+
+  const msx = vpCX + (me.renderX - camX) * scale;
+  const msy = vpCY + (me.renderY - camY) * scale;
+  const dx = e.clientX - msx;
+  const dy = e.clientY - msy;
+  const len = Math.sqrt(dx*dx+dy*dy);
+  if (len < 2) return;
+  socket.emit('shoot', { dx: dx/len, dy: dy/len });
+});
+
+// Scroll to zoom
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  cellSize = Math.max(CELL_MIN, Math.min(CELL_MAX, cellSize - Math.sign(e.deltaY) * 2));
+}, { passive: false });
+
+// ── SOCKET EVENTS ─────────────────────────────────────────────────────────────
+socket.on('roomError', msg => showLobbyError(msg));
+
+socket.on('roomJoined', data => {
+  myId = data.players[socket.id] ? socket.id : Object.keys(data.players)[0];
+  // Actually server sets socket.id as key
+  myId = socket.id;
+
+  // Init players with renderX/renderY
+  players = {};
+  for (const [id, p] of Object.entries(data.players)) {
+    players[id] = { ...p, renderX: p.x, renderY: p.y };
+  }
+  pickups  = data.pickups || {};
+  mapTiles = data.map;
+  MAP_W    = data.cols;
+  MAP_H    = data.rows;
+
+  // Center camera on map center initially
+  camX = (MAP_W * TILE) / 2;
+  camY = (MAP_H * TILE) / 2;
+
+  roomCodeEl.textContent = data.code;
+  roomSizeEl.textContent = data.mapSize.toUpperCase() + ` · ${data.cols}×${data.rows}`;
+
+  lobby.style.display    = 'none';
+  gameWrap.style.display = 'block';
+  resizeCanvas();
+  addChat(null, `— Entered room ${data.code}. SPACE to find yourself. —`, null, 'sys');
+});
+
+socket.on('newPlayer', p => {
+  players[p.id] = { ...p, renderX: p.x, renderY: p.y };
+  addChat(null, `${p.char} ${p.name} joined.`, null, 'sys');
+});
+
+socket.on('playerLeft', id => {
+  const p = players[id];
+  if (p) addChat(null, `${p.char} ${p.name} left.`, null, 'sys');
+  delete players[id];
+});
+
+socket.on('positions', data => {
+  for (const [id, pos] of Object.entries(data)) {
+    if (players[id]) { players[id].x = pos.x; players[id].y = pos.y; }
+  }
+});
+
+socket.on('ammoUpdate', ({ bullets: b }) => {
+  if (players[myId]) players[myId].bullets = b;
+});
+
+socket.on('noAmmo', () => {
+  addChat(null, '— Out of ammo! Find a pickup. —', null, 'sys');
+});
+
+socket.on('bulletSpawned', b => {
+  bullets[b.id] = { ...b, life: 3 };
+});
+
+socket.on('bulletDead', data => {
+  delete bullets[data.id];
+});
+
+socket.on('playerHit', data => {
+  if (players[data.id]) players[data.id].hp = data.hp;
+  if (data.id === myId) {
+    // Flash
+    canvas.style.boxShadow = 'inset 0 0 40px rgba(255,58,74,0.5)';
+    setTimeout(() => canvas.style.boxShadow = '', 200);
+  }
+});
+
+socket.on('playerDied', data => {
+  if (players[data.id]) { players[data.id].alive = false; players[data.id].hp = 0; }
+  // Add dropped pickups
+  if (data.drops) for (const pk of data.drops) pickups[pk.id] = pk;
+  const victim = players[data.id];
+  addChat(null, `☠ ${data.killerChar}${data.killerName} killed ${victim?.char||''}${victim?.name||'?'}`, null, 'kill');
+  if (data.id === myId) {
+    deadOverlay.style.display = 'flex';
+  }
+});
+
+socket.on('playerRespawned', p => {
+  players[p.id] = { ...p, renderX: p.x, renderY: p.y };
+  if (p.id === myId) {
+    deadOverlay.style.display = 'none';
+    camX = p.x; camY = p.y;
+  }
+});
+
+socket.on('killUpdate', data => {
+  if (players[data.id]) players[data.id].kills = data.kills;
+});
+
+socket.on('pickupsUpdate', data => {
+  pickups = data;
+});
+
+socket.on('pickupCollected', data => {
+  delete pickups[data.pickupId];
+  if (data.playerId === myId) {
+    if (players[myId]) {
+      players[myId].hp = data.hp;
+      players[myId].bullets = data.bullets;
+    }
+  }
+});
+
+socket.on('chatMessage', data => {
+  addChat(`${data.char} ${data.name}`, data.message, data.color);
+});
+
+socket.on('roomClosed', () => {
+  document.getElementById('roomClosedOverlay').style.display = 'flex';
+});
+
+// Space = center on self
+document.addEventListener('keydown', e => {
+  if (e.key === ' ' && !chatFocused && myId && players[myId]) {
+    camX = players[myId].renderX;
+    camY = players[myId].renderY;
+  }
+});
+
+// ── CHAT HELPER ───────────────────────────────────────────────────────────────
+function addChat(name, msg, color, type) {
+  const el = document.createElement('div');
+  el.className = `chat-msg${type?' '+type:''}`;
+  if (name) el.innerHTML = `<span class="chat-name" style="color:${color||'var(--text-hi)'}">${escHtml(name)}:</span>${escHtml(msg)}`;
+  else el.textContent = msg;
+  chatLogEl.appendChild(el);
+  setTimeout(() => el.classList.add('fading'), 7000);
+  setTimeout(() => el.remove(), 8000);
+  while (chatLogEl.children.length > 10) chatLogEl.firstChild.remove();
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
